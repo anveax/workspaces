@@ -45,13 +45,13 @@ Renumbering changes `03-learning-c` to `02-learning-c`.
 workspaces/
   ws
   README.md
-  tests/
+  .tests/
   docs/
   01/
   03-learning-c/
 ```
 
-Here, only `01` and `03-learning-c` are workspaces. `docs` and `tests` are untouched.
+Here, only `01` and `03-learning-c` are workspaces. `docs` and `.tests` are untouched.
 
 The root is derived from the script's resolved location, including when invoked through a symbolic link.
 The current working directory does not affect it. Moving or renaming the repository requires no changes.
@@ -80,14 +80,14 @@ After an interrupted operation:
 
 ## Git and tests
 
-All root directories except `tests/` and `.github/` are ignored by Git, regardless of their names.
+All root directories except `.tests/` and `.github/` are ignored by Git, regardless of their names.
 They may contain independent repositories. To track another root directory, add `!/directory-name/`
 to `.gitignore` after `/*/`. Python caches and `.DS_Store` are ignored at every depth.
 Ignore rules do not affect files already tracked by Git.
 Git does not track empty directories. Renumbering moves directories, not external references to their paths.
 
 ```sh
-python3 -m unittest discover -s tests -v
+python3 -m unittest discover -s .tests -v
 ```
 
 On Windows, use `python` instead of `python3`. Tests use temporary repositories.
