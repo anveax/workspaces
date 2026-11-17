@@ -80,8 +80,10 @@ After an interrupted operation:
 
 ## Git and tests
 
-Numbered directories are ignored by Git by default and may contain independent repositories.
-Remove the two numbered-directory patterns from `.gitignore` to track their contents here.
+All root directories except `tests/` and `.github/` are ignored by Git, regardless of their names.
+They may contain independent repositories. To track another root directory, add `!/directory-name/`
+to `.gitignore` after `/*/`. Python caches and `.DS_Store` are ignored at every depth.
+Ignore rules do not affect files already tracked by Git.
 Git does not track empty directories. Renumbering moves directories, not external references to their paths.
 
 ```sh
