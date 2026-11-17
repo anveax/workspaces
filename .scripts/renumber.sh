@@ -2,117 +2,119 @@
 
 set -euo pipefail
 
-show_progress() {
-    local current=$1 total=$2 width=30
-    local percent=$(( 100 * current / total ))
-    local filled=$(( width * current / total ))
-    printf "\r[%-${width}s] %3d%%" "$(printf '#%.0s' $(seq 1 $filled))" "$percent"
-}
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-all_dirs=()
-while IFS= read -r d; do
-    all_dirs+=("${d%/}")
-done < <(for d in */; do printf '%s\n' "$d"; done | sort)
-
-if [[ ${#all_dirs[@]} -eq 0 ]]; then
-    echo "No directories to process."
-    exit 0
+if (( $# > 0 )); then
+    echo "Usage: renumber.sh" >&2
+    exit 1
 fi
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+export LC_ALL=C
+shopt -s nullglob
 
 valid=()
-suffixes=()
-
-for d in "${all_dirs[@]}"; do
-    if [[ $d =~ ^([0-9][0-9])-(.+)$ ]]; then
-        valid+=("$d")
-        suffixes+=("${BASH_REMATCH[2]}")
+new_names=()
+for entry in "$PWD"/*; do
+    if [[ -d "$entry" && ! -L "$entry" && "${entry##*/}" =~ ^[0-9][0-9](-.+)?$ ]]; then
+        valid+=("${entry##*/}")
     fi
 done
-
-if [[ ${#valid[@]} -eq 0 ]]; then
-    echo "No directories with NN- prefix to renumber."
+if (( ${#valid[@]} == 0 )); then
+    echo "No workspaces to renumber."
     exit 0
 fi
-
-if [[ ${#valid[@]} -gt 99 ]]; then
-    echo "Error: too many directories (${#valid[@]}, maximum 99)."
+if (( ${#valid[@]} > 99 )); then
+    echo "Error: too many workspaces (${#valid[@]}, maximum 99)." >&2
     exit 1
 fi
 
-new_names=()
-for i in "${!valid[@]}"; do
-    num=$(printf "%02d" $((i + 1)))
-    new_names+=("${num}-${suffixes[$i]}")
-done
-
 changes=false
 for i in "${!valid[@]}"; do
+    num=$(printf '%02d' "$((i + 1))")
+    new_names+=("$num${valid[$i]:2}")
     if [[ "${valid[$i]}" != "${new_names[$i]}" ]]; then
         changes=true
-        break
     fi
 done
-
 if ! $changes; then
     echo "Directories are already correctly numbered."
     exit 0
 fi
 
-max_len=0
-for old in "${valid[@]}"; do
-    (( ${#old} > max_len )) && max_len=${#old}
-done
-max_len=$(( max_len > 8 ? max_len : 8 ))
-
-echo "Planned renames:"
-echo
-
-for i in "${!valid[@]}"; do
-    old="${valid[$i]}"
-    new="${new_names[$i]}"
-    if [[ "$old" != "$new" ]]; then
-        printf "  %-*s  →  %s\n" "$max_len" "$old" "$new"
-    else
-        printf "  %-*s  →  (unchanged)\n" "$max_len" "$old"
+for target in "${new_names[@]}"; do
+    if [[ -e "$target" || -L "$target" ]]; then
+        is_source=false
+        for old in "${valid[@]}"; do
+            if [[ "$target" == "$old" ]]; then
+                is_source=true
+                break
+            fi
+        done
+        if ! $is_source; then
+            printf "Error: target '%s' already exists.\n" "$target" >&2
+            exit 1
+        fi
     fi
 done
-echo
 
+printf 'Workspaces: %s\nPlanned renames:\n' "$PWD"
+for i in "${!valid[@]}"; do
+    printf '  %s → %s\n' "${valid[$i]}" "${new_names[$i]}"
+done
 while true; do
-    read -r -p "Proceed with renumbering? (yes/no): " answer
-    if [[ "$answer" =~ ^[Yy]es$ ]]; then
-        break
-    elif [[ "$answer" =~ ^[Nn]o$ ]]; then
-        echo "Operation cancelled."
-        exit 0
-    else
-        echo "Please answer yes or no."
-    fi
-done
-
-tmp_names=()
-for i in "${!valid[@]}"; do
-    tmp=".tmp_renumber_$$_$i"
-    if [[ -e "$tmp" ]]; then
-        echo "Error: temporary name $tmp already exists. Aborting."
+    if ! read -r -p 'Proceed with renumbering? (yes/no): ' answer; then
+        echo "Operation cancelled (no confirmation received)."
         exit 1
     fi
-    tmp_names+=("$tmp")
+    case "$answer" in
+        [Yy]es) break ;;
+        [Nn]o) echo "Operation cancelled."; exit 0 ;;
+        *) echo "Please answer yes or no." ;;
+    esac
 done
+
+stage=$(mktemp -d "$PWD/.renumber.XXXXXXXX")
+placing=false
+completed=false
+cleanup_renumber() {
+    local status=$? i failed=false
+    trap - EXIT
+    if ! $completed; then
+        if $placing; then
+            for i in "${!valid[@]}"; do
+                if [[ ! -d "$stage/${valid[$i]}" ]]; then
+                    if ! mv -- "${new_names[$i]}" "$stage/${valid[$i]}"; then
+                        failed=true
+                    fi
+                fi
+            done
+        fi
+        if ! $failed; then
+            for i in "${!valid[@]}"; do
+                if [[ -d "$stage/${valid[$i]}" ]]; then
+                    if ! mv -- "$stage/${valid[$i]}" "${valid[$i]}"; then
+                        failed=true
+                    fi
+                fi
+            done
+        fi
+        if $failed; then
+            printf 'Error: rollback incomplete; recover remaining workspaces from %s\n' "$stage" >&2
+        else
+            echo "Renumbering failed; original names restored." >&2
+        fi
+    fi
+    if ! $failed; then
+        rmdir -- "$stage"
+    fi
+    exit "$status"
+}
+trap cleanup_renumber EXIT
 
 for i in "${!valid[@]}"; do
-    mv -- "${valid[$i]}" "${tmp_names[$i]}"
-    show_progress $((i+1)) ${#valid[@]}
+    mv -- "${valid[$i]}" "$stage/${valid[$i]}"
 done
-echo
-
+placing=true
 for i in "${!valid[@]}"; do
-    mv -- "${tmp_names[$i]}" "${new_names[$i]}"
-    show_progress $((i+1)) ${#valid[@]}
+    mv -- "$stage/${valid[$i]}" "${new_names[$i]}"
 done
-echo
-
+completed=true
 echo "Done."

@@ -1,47 +1,45 @@
 #!/usr/bin/env bash
-# new-workspace.sh — create the next numbered workspace directory
 
 set -euo pipefail
 
-# Directory where workspaces live
-WORKSPACES_DIR="${WORKSPACES_DIR:-$HOME/Workspaces}"
-
-# Make sure the directory exists
-if [[ ! -d "$WORKSPACES_DIR" ]]; then
-	echo "Error: '$WORKSPACES_DIR' does not exist." >&2
-	exit 1
+if (( $# > 1 )); then
+    echo "Usage: new.sh [name-without-spaces]" >&2
+    exit 1
 fi
-
-# Find the highest numeric prefix among directories matching "NN-*" or just "NN"
-max=0
-shopt -s nullglob
-for entry in "$WORKSPACES_DIR"/*/; do
-	base=$(basename "$entry")
-	# Extract leading digits
-	if [[ "$base" =~ ^([0-9]+) ]]; then
-		num=$((10#${BASH_REMATCH[1]})) # force base-10 (avoid octal issues)
-		if ((num > max)); then
-			max=$num
-		fi
-	fi
-done
-shopt -u nullglob
-
-next=$(printf "%02d" $((max + 1)))
-
-# Optional workspace name from the first argument
 name="${1:-}"
+if [[ "$name" == */* || "$name" =~ [[:space:]] ]]; then
+    echo "Error: workspace names cannot contain slashes or whitespace." >&2
+    exit 1
+fi
 
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+export LC_ALL=C
+shopt -s nullglob
+
+max=0
+for entry in "$PWD"/*; do
+    if [[ -d "$entry" && ! -L "$entry" && "${entry##*/}" =~ ^[0-9][0-9](-.+)?$ ]]; then
+        base="${entry##*/}"
+        num=$((10#${base:0:2}))
+        if (( num > max )); then
+            max=$num
+        fi
+    fi
+done
+
+if (( max >= 99 )); then
+    echo "Error: prefix 99 is already in use. Renumber to close gaps or remove a workspace first." >&2
+    exit 1
+fi
+
+next=$(printf '%02d' "$((max + 1))")
+new_dir="$PWD/$next"
 if [[ -n "$name" ]]; then
-	new_dir="$WORKSPACES_DIR/${next}-${name}"
-else
-	new_dir="$WORKSPACES_DIR/${next}"
+    new_dir+="-$name"
 fi
-
-if [[ -e "$new_dir" ]]; then
-	echo "Error: '$new_dir' already exists." >&2
-	exit 1
+if [[ -e "$new_dir" || -L "$new_dir" ]]; then
+    printf "Error: '%s' already exists.\n" "$new_dir" >&2
+    exit 1
 fi
-
-mkdir -p "$new_dir"
-echo "Created: $new_dir"
+mkdir -- "$new_dir"
+printf 'Created: %s\n' "$new_dir"
